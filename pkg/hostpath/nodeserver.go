@@ -281,7 +281,7 @@ func (ns *nodeServer) NodeExpandVolume(ctx context.Context, req *csi.NodeExpandV
 	}
 
 	executor := utilexec.New()
-	out, err := executor.Command("e2fsck", "-f", volPath).CombinedOutput()
+	out, err := executor.Command("e2fsck", "-f", "-y", volPath).CombinedOutput()
 	if err != nil {
 		return nil, fmt.Errorf("failed to check file system: %v, %v", err, string(out))
 	}
