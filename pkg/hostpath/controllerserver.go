@@ -43,10 +43,7 @@ const (
 
 type accessType int
 
-const (
-	mountAccess accessType = iota
-	blockAccess
-)
+const mountAccess accessType = iota
 
 type controllerServer struct {
 	caps   []*csi.ControllerServiceCapability
@@ -57,13 +54,14 @@ func NewControllerServer(ephemeral bool, nodeID string) *controllerServer {
 	if ephemeral {
 		return &controllerServer{caps: getControllerServiceCapabilities(nil), nodeID: nodeID}
 	}
+
 	return &controllerServer{
 		caps: getControllerServiceCapabilities(
 			[]csi.ControllerServiceCapability_RPC_Type{
 				csi.ControllerServiceCapability_RPC_CREATE_DELETE_VOLUME,
+				// TODO (kzidane) add LIST_VOLUMES capability
 				csi.ControllerServiceCapability_RPC_CREATE_DELETE_SNAPSHOT,
 				csi.ControllerServiceCapability_RPC_LIST_SNAPSHOTS,
-				csi.ControllerServiceCapability_RPC_CLONE_VOLUME,
 				csi.ControllerServiceCapability_RPC_EXPAND_VOLUME,
 			}),
 		nodeID: nodeID,
@@ -80,39 +78,30 @@ func (cs *controllerServer) CreateVolume(ctx context.Context, req *csi.CreateVol
 	if len(req.GetName()) == 0 {
 		return nil, status.Error(codes.InvalidArgument, "Name missing in request")
 	}
+
 	caps := req.GetVolumeCapabilities()
 	if caps == nil {
 		return nil, status.Error(codes.InvalidArgument, "Volume Capabilities missing in request")
 	}
 
 	// Keep a record of the requested access types.
-	var accessTypeMount, accessTypeBlock bool
+	var accessTypeMount bool
 
 	for _, cap := range caps {
-		if cap.GetBlock() != nil {
-			accessTypeBlock = true
-		}
 		if cap.GetMount() != nil {
 			accessTypeMount = true
+			break
 		}
 	}
+
 	// A real driver would also need to check that the other
 	// fields in VolumeCapabilities are sane. The check above is
 	// just enough to pass the "[Testpattern: Dynamic PV (block
 	// volmode)] volumeMode should fail in binding dynamic
 	// provisioned PV to PVC" storage E2E test.
 
-	if accessTypeBlock && accessTypeMount {
-		return nil, status.Error(codes.InvalidArgument, "cannot have both block and mount access type")
-	}
-
-	var requestedAccessType accessType
-
-	if accessTypeBlock {
-		requestedAccessType = blockAccess
-	} else {
-		// Default to mount.
-		requestedAccessType = mountAccess
+	if !accessTypeMount {
+		return nil, status.Error(codes.InvalidArgument, "access type not supported")
 	}
 
 	// Check for maximum available capacity
@@ -130,6 +119,7 @@ func (cs *controllerServer) CreateVolume(ctx context.Context, req *csi.CreateVol
 		if exVol.VolSize < capacity {
 			return nil, status.Errorf(codes.AlreadyExists, "Volume with the same name: %s but with different size already exist", req.GetName())
 		}
+
 		if req.GetVolumeContentSource() != nil {
 			volumeSource := req.VolumeContentSource
 			switch volumeSource.Type.(type) {
@@ -137,14 +127,11 @@ func (cs *controllerServer) CreateVolume(ctx context.Context, req *csi.CreateVol
 				if volumeSource.GetSnapshot() != nil && exVol.ParentSnapID != volumeSource.GetSnapshot().GetSnapshotId() {
 					return nil, status.Error(codes.AlreadyExists, "existing volume source snapshot id not matching")
 				}
-			case *csi.VolumeContentSource_Volume:
-				if volumeSource.GetVolume() != nil && exVol.ParentVolID != volumeSource.GetVolume().GetVolumeId() {
-					return nil, status.Error(codes.AlreadyExists, "existing volume source volume id not matching")
-				}
 			default:
 				return nil, status.Errorf(codes.InvalidArgument, "%v not a proper volume source", volumeSource)
 			}
 		}
+
 		// TODO (sbezverk) Do I need to make sure that volume still exists?
 		return &csi.CreateVolumeResponse{
 			Volume: &csi.Volume{
@@ -158,10 +145,11 @@ func (cs *controllerServer) CreateVolume(ctx context.Context, req *csi.CreateVol
 
 	volumeID := uuid.NewUUID().String()
 
-	vol, err := createHostpathVolume(volumeID, req.GetName(), capacity, requestedAccessType, false /* ephemeral */)
+	vol, err := createHostpathVolume(volumeID, req.GetName(), capacity, mountAccess, false /* ephemeral */)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "failed to create volume %v: %v", volumeID, err)
 	}
+
 	glog.V(4).Infof("created volume %s at path %s", vol.VolID, vol.VolPath)
 
 	if req.GetVolumeContentSource() != nil {
@@ -170,23 +158,20 @@ func (cs *controllerServer) CreateVolume(ctx context.Context, req *csi.CreateVol
 		switch volumeSource.Type.(type) {
 		case *csi.VolumeContentSource_Snapshot:
 			if snapshot := volumeSource.GetSnapshot(); snapshot != nil {
-				err = loadFromSnapshot(capacity, snapshot.GetSnapshotId(), path, requestedAccessType)
+				err = loadFromSnapshot(capacity, snapshot.GetSnapshotId(), path, mountAccess)
 				vol.ParentSnapID = snapshot.GetSnapshotId()
-			}
-		case *csi.VolumeContentSource_Volume:
-			if srcVolume := volumeSource.GetVolume(); srcVolume != nil {
-				err = loadFromVolume(capacity, srcVolume.GetVolumeId(), path, requestedAccessType)
-				vol.ParentVolID = srcVolume.GetVolumeId()
 			}
 		default:
 			err = status.Errorf(codes.InvalidArgument, "%v not a proper volume source", volumeSource)
 		}
+
 		if err != nil {
 			if delErr := deleteHostpathVolume(volumeID); delErr != nil {
 				glog.V(2).Infof("deleting hostpath volume %v failed: %v", volumeID, delErr)
 			}
 			return nil, err
 		}
+
 		glog.V(4).Infof("successfully populated volume %s", vol.VolID)
 	}
 
@@ -247,12 +232,9 @@ func (cs *controllerServer) ValidateVolumeCapabilities(ctx context.Context, req 
 	}
 
 	for _, cap := range req.GetVolumeCapabilities() {
-		if cap.GetMount() == nil && cap.GetBlock() == nil {
-			return nil, status.Error(codes.InvalidArgument, "cannot have both mount and block access type be undefined")
+		if cap.GetMount() == nil {
+			return nil, status.Error(codes.InvalidArgument, "access type not supported")
 		}
-
-		// A real driver would check the capabilities of the given volume with
-		// the set of requested capabilities.
 	}
 
 	return &csi.ValidateVolumeCapabilitiesResponse{
@@ -276,6 +258,7 @@ func (cs *controllerServer) GetCapacity(ctx context.Context, req *csi.GetCapacit
 	return nil, status.Error(codes.Unimplemented, "")
 }
 
+// TODO (kzidane) implement ListVolumes
 func (cs *controllerServer) ListVolumes(ctx context.Context, req *csi.ListVolumesRequest) (*csi.ListVolumesResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "")
 }
@@ -333,13 +316,13 @@ func (cs *controllerServer) CreateSnapshot(ctx context.Context, req *csi.CreateS
 	file := getSnapshotPath(snapshotID)
 
 	var cmd []string
-	if hostPathVolume.VolAccessType == blockAccess {
-		glog.V(4).Infof("Creating snapshot of Raw Block Mode Volume")
+
+	// TODO (kzidane) unmount first? remount readonly? copy contents instead?
+	if hostPathVolume.VolAccessType == mountAccess {
+		glog.V(4).Infof("Creating snapshot of volume")
 		cmd = []string{"cp", volPath, file}
-	} else {
-		glog.V(4).Infof("Creating snapshot of Filsystem Mode Volume")
-		cmd = []string{"tar", "czf", file, "-C", volPath, "."}
 	}
+
 	executor := utilexec.New()
 	out, err := executor.Command(cmd[0], cmd[1:]...).CombinedOutput()
 	if err != nil {
@@ -379,6 +362,7 @@ func (cs *controllerServer) DeleteSnapshot(ctx context.Context, req *csi.DeleteS
 		glog.V(3).Infof("invalid delete snapshot req: %v", req)
 		return nil, err
 	}
+
 	snapshotID := req.GetSnapshotId()
 	glog.V(4).Infof("deleting snapshot %s", snapshotID)
 	path := getSnapshotPath(snapshotID)
@@ -416,6 +400,7 @@ func (cs *controllerServer) ListSnapshots(ctx context.Context, req *csi.ListSnap
 	for k := range hostPathVolumeSnapshots {
 		sortedKeys = append(sortedKeys, k)
 	}
+
 	sort.Strings(sortedKeys)
 
 	for _, key := range sortedKeys {
@@ -513,6 +498,11 @@ func (cs *controllerServer) ControllerExpandVolume(ctx context.Context, req *csi
 	}
 
 	if exVol.VolSize < capacity {
+
+		if err := expandVolume(volID, capacity); err != nil {
+			return nil, status.Errorf(codes.Internal, "Could not expand volume %s: %v", volID, err)
+		}
+
 		exVol.VolSize = capacity
 		if err := updateHostpathVolume(volID, exVol); err != nil {
 			return nil, status.Errorf(codes.Internal, "Could not update volume %s: %v", volID, err)

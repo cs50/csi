@@ -28,7 +28,6 @@ import (
 	"github.com/golang/glog"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
-	"k8s.io/kubernetes/pkg/volume/util/volumepathhandler"
 	utilexec "k8s.io/utils/exec"
 
 	timestamp "github.com/golang/protobuf/ptypes/timestamp"
@@ -177,6 +176,7 @@ func getVolumeByID(volumeID string) (hostPathVolume, error) {
 	if hostPathVol, ok := hostPathVolumes[volumeID]; ok {
 		return hostPathVol, nil
 	}
+
 	return hostPathVolume{}, fmt.Errorf("volume id %s does not exist in the volumes list", volumeID)
 }
 
@@ -186,6 +186,7 @@ func getVolumeByName(volName string) (hostPathVolume, error) {
 			return hostPathVol, nil
 		}
 	}
+
 	return hostPathVolume{}, fmt.Errorf("volume name %s does not exist in the volumes list", volName)
 }
 
@@ -207,33 +208,21 @@ func getVolumePath(volID string) string {
 // It returns the volume path or err if one occurs.
 func createHostpathVolume(volID, name string, cap int64, volAccessType accessType, ephemeral bool) (*hostPathVolume, error) {
 	path := getVolumePath(volID)
-
-	switch volAccessType {
-	case mountAccess:
-		err := os.MkdirAll(path, 0777)
-		if err != nil {
-			return nil, err
-		}
-	case blockAccess:
+	if volAccessType == mountAccess {
 		executor := utilexec.New()
 		size := fmt.Sprintf("%dM", cap/mib)
+
 		// Create a block file.
-		out, err := executor.Command("fallocate", "-l", size, path).CombinedOutput()
+		out, err := executor.Command("truncate", "-s", size, path).CombinedOutput()
 		if err != nil {
 			return nil, fmt.Errorf("failed to create block device: %v, %v", err, string(out))
 		}
 
-		// Associate block file with the loop device.
-		volPathHandler := volumepathhandler.VolumePathHandler{}
-		_, err = volPathHandler.AttachFileDevice(path)
+		out, err = executor.Command("mkfs.ext4", path).CombinedOutput()
 		if err != nil {
-			// Remove the block file because it'll no longer be used again.
-			if err2 := os.Remove(path); err2 != nil {
-				glog.Errorf("failed to cleanup block file %s: %v", path, err2)
-			}
-			return nil, fmt.Errorf("failed to attach device %v: %v", path, err)
+			return nil, fmt.Errorf("failed to create file system on device: %v, %v", err, string(out))
 		}
-	default:
+	} else {
 		return nil, fmt.Errorf("unsupported access type %v", volAccessType)
 	}
 
@@ -245,9 +234,25 @@ func createHostpathVolume(volID, name string, cap int64, volAccessType accessTyp
 		VolAccessType: volAccessType,
 		Ephemeral:     ephemeral,
 	}
+
 	hostPathVolumes[volID] = hostpathVol
 	return &hostpathVol, nil
 }
+
+
+func expandVolume(volID string, cap int64) error {
+	path := getVolumePath(volID)
+	executor := utilexec.New()
+	size := fmt.Sprintf("%dM", cap/mib)
+
+	out, err := executor.Command("truncate", "-s", size, path).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("failed to expand volume: %v, %v", err, string(out))
+	}
+
+	return nil
+}
+
 
 // updateVolume updates the existing hostpath volume.
 func updateHostpathVolume(volID string, volume hostPathVolume) error {
@@ -265,33 +270,11 @@ func updateHostpathVolume(volID string, volume hostPathVolume) error {
 func deleteHostpathVolume(volID string) error {
 	glog.V(4).Infof("deleting hostpath volume: %s", volID)
 
-	vol, err := getVolumeByID(volID)
-	if err != nil {
-		// Return OK if the volume is not found.
-		return nil
-	}
-
-	if vol.VolAccessType == blockAccess {
-		volPathHandler := volumepathhandler.VolumePathHandler{}
-		// Get the associated loop device.
-		device, err := volPathHandler.GetLoopDevice(getVolumePath(volID))
-		if err != nil {
-			return fmt.Errorf("failed to get the loop device: %v", err)
-		}
-
-		if device != "" {
-			// Remove any associated loop device.
-			glog.V(4).Infof("deleting loop device %s", device)
-			if err := volPathHandler.RemoveLoopDevice(device); err != nil {
-				return fmt.Errorf("failed to remove loop device %v: %v", device, err)
-			}
-		}
-	}
-
 	path := getVolumePath(volID)
 	if err := os.RemoveAll(path); err != nil && !os.IsNotExist(err) {
 		return err
 	}
+
 	delete(hostPathVolumes, volID)
 	return nil
 }
@@ -327,71 +310,16 @@ func loadFromSnapshot(size int64, snapshotId, destPath string, mode accessType) 
 	snapshotPath := snapshot.Path
 
 	var cmd []string
-	switch mode {
-	case mountAccess:
-		cmd = []string{"tar", "zxvf", snapshotPath, "-C", destPath}
-	case blockAccess:
+	if mode == mountAccess {
 		cmd = []string{"dd", "if=" + snapshotPath, "of=" + destPath}
-	default:
+	} else {
 		return status.Errorf(codes.InvalidArgument, "unknown accessType: %d", mode)
 	}
+
 	executor := utilexec.New()
 	out, err := executor.Command(cmd[0], cmd[1:]...).CombinedOutput()
 	if err != nil {
 		return status.Errorf(codes.Internal, "failed pre-populate data from snapshot %v: %v: %s", snapshotId, err, out)
-	}
-	return nil
-}
-
-// loadFromVolume populates the given destPath with data from the srcVolumeID
-func loadFromVolume(size int64, srcVolumeId, destPath string, mode accessType) error {
-	hostPathVolume, ok := hostPathVolumes[srcVolumeId]
-	if !ok {
-		return status.Error(codes.NotFound, "source volumeId does not exist, are source/destination in the same storage class?")
-	}
-	if hostPathVolume.VolSize > size {
-		return status.Errorf(codes.InvalidArgument, "volume %v size %v is greater than requested volume size %v", srcVolumeId, hostPathVolume.VolSize, size)
-	}
-	if mode != hostPathVolume.VolAccessType {
-		return status.Errorf(codes.InvalidArgument, "volume %v mode is not compatible with requested mode", srcVolumeId)
-	}
-
-	switch mode {
-	case mountAccess:
-		return loadFromFilesystemVolume(hostPathVolume, destPath)
-	case blockAccess:
-		return loadFromBlockVolume(hostPathVolume, destPath)
-	default:
-		return status.Errorf(codes.InvalidArgument, "unknown accessType: %d", mode)
-	}
-}
-
-func loadFromFilesystemVolume(hostPathVolume hostPathVolume, destPath string) error {
-	srcPath := hostPathVolume.VolPath
-	isEmpty, err := hostPathIsEmpty(srcPath)
-	if err != nil {
-		return status.Errorf(codes.Internal, "failed verification check of source hostpath volume %v: %v", hostPathVolume.VolID, err)
-	}
-
-	// If the source hostpath volume is empty it's a noop and we just move along, otherwise the cp call will fail with a a file stat error DNE
-	if !isEmpty {
-		args := []string{"-a", srcPath + "/.", destPath + "/"}
-		executor := utilexec.New()
-		out, err := executor.Command("cp", args...).CombinedOutput()
-		if err != nil {
-			return status.Errorf(codes.Internal, "failed pre-populate data from volume %v: %v: %s", hostPathVolume.VolID, err, out)
-		}
-	}
-	return nil
-}
-
-func loadFromBlockVolume(hostPathVolume hostPathVolume, destPath string) error {
-	srcPath := hostPathVolume.VolPath
-	args := []string{"if=" + srcPath, "of=" + destPath}
-	executor := utilexec.New()
-	out, err := executor.Command("dd", args...).CombinedOutput()
-	if err != nil {
-		return status.Errorf(codes.Internal, "failed pre-populate data from volume %v: %v: %s", hostPathVolume.VolID, err, out)
 	}
 	return nil
 }

@@ -4,6 +4,7 @@ github.com/census-instrumentation/opencensus-proto v0.2.1/go.mod h1:f6KPmirojxKA
 github.com/client9/misspell v0.3.4/go.mod h1:qj6jICC3Q7zFZvVWo7KLAzC3yx5G7kyvSDkc90ppPyw=
 github.com/container-storage-interface/spec v1.2.0 h1:bD9KIVgaVKKkQ/UbVUY9kCaH/CJbhNxe0eeB4JeJV2s=
 github.com/container-storage-interface/spec v1.2.0/go.mod h1:6URME8mwIBbpVyZV93Ce5St17xBiQJQY67NDsuohiy4=
+github.com/container-storage-interface/spec v1.3.0 h1:wMH4UIoWnK/TXYw8mbcIHgZmB6kHOeIsYsiaTJwa6bc=
 github.com/davecgh/go-spew v1.1.0 h1:ZDRjVQ15GmhC3fiQ8ni8+OwkZQO4DARzQgrnXU1Liz8=
 github.com/davecgh/go-spew v1.1.0/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
 github.com/envoyproxy/go-control-plane v0.9.1-0.20191026205805-5f8ba28d4473/go.mod h1:YTl/9mNaCwkRvm6d1a2C3ymFceY/DCBVvsKhRF0iEA4=
@@ -76,3 +77,4 @@ k8s.io/kubernetes v1.12.2 h1:dXuBYJXfqb6SXebXzigNk9ch2jVzGZIT4eSvGMUxcPk=
 k8s.io/kubernetes v1.12.2/go.mod h1:ocZa8+6APFNC2tX1DZASIbocyYT5jHzqFVsY5aoB7Jk=
 k8s.io/utils v0.0.0-20181102055113-1bd4f387aa67 h1:+kBMW7D4cSYIhPz0fVs6NRp5QILMz6+65ec4kWJOoXs=
 k8s.io/utils v0.0.0-20181102055113-1bd4f387aa67/go.mod h1:8k8uAuAQ0rXslZKaEWd0c3oVhZz7sSzSiPnVZayjIX0=
+k8s.io/utils v0.0.0-20200731180307-f00132d28269 h1:2b6RJdHYnDNUuhjtbs+OPAjIKDGT8Qikfg91WbEYC0k=

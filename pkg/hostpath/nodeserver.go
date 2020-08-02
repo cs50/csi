@@ -28,7 +28,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"k8s.io/kubernetes/pkg/util/mount"
-	"k8s.io/kubernetes/pkg/volume/util/volumepathhandler"
+	utilexec "k8s.io/utils/exec"
 )
 
 const TopologyKeyNode = "topology.hostpath.csi/node"
@@ -47,6 +47,7 @@ func NewNodeServer(nodeId string, ephemeral bool, maxVolumesPerNode int64) *node
 	}
 }
 
+
 func (ns *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublishVolumeRequest) (*csi.NodePublishVolumeResponse, error) {
 
 	// Check arguments
@@ -64,9 +65,8 @@ func (ns *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublis
 	ephemeralVolume := req.GetVolumeContext()["csi.storage.k8s.io/ephemeral"] == "true" ||
 		req.GetVolumeContext()["csi.storage.k8s.io/ephemeral"] == "" && ns.ephemeral // Kubernetes 1.15 doesn't have csi.storage.k8s.io/ephemeral.
 
-	if req.GetVolumeCapability().GetBlock() != nil &&
-		req.GetVolumeCapability().GetMount() != nil {
-		return nil, status.Error(codes.InvalidArgument, "cannot have both block and mount access type")
+	if req.GetVolumeCapability().GetMount() == nil {
+		return nil, status.Error(codes.InvalidArgument, "access type must be mount")
 	}
 
 	// if ephemeral is specified, create volume here to avoid errors
@@ -78,6 +78,7 @@ func (ns *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublis
 			glog.Error("ephemeral mode failed to create volume: ", err)
 			return nil, status.Error(codes.Internal, err.Error())
 		}
+
 		glog.V(4).Infof("ephemeral mode: created volume: %s", vol.VolPath)
 	}
 
@@ -86,51 +87,7 @@ func (ns *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublis
 		return nil, status.Error(codes.NotFound, err.Error())
 	}
 
-	if req.GetVolumeCapability().GetBlock() != nil {
-		if vol.VolAccessType != blockAccess {
-			return nil, status.Error(codes.InvalidArgument, "cannot publish a non-block volume as block volume")
-		}
-
-		volPathHandler := volumepathhandler.VolumePathHandler{}
-
-		// Get loop device from the volume path.
-		loopDevice, err := volPathHandler.GetLoopDevice(vol.VolPath)
-		if err != nil {
-			return nil, status.Error(codes.Internal, fmt.Sprintf("failed to get the loop device: %v", err))
-		}
-
-		mounter := mount.New("")
-
-		// Check if the target path exists. Create if not present.
-		_, err = os.Lstat(targetPath)
-		if os.IsNotExist(err) {
-			if err = mounter.MakeFile(targetPath); err != nil {
-				return nil, status.Error(codes.Internal, fmt.Sprintf("failed to create target path: %s: %v", targetPath, err))
-			}
-		}
-		if err != nil {
-			return nil, status.Errorf(codes.Internal, "failed to check if the target block file exists: %v", err)
-		}
-
-		// Check if the target path is already mounted. Prevent remounting.
-		notMount, err := mounter.IsNotMountPoint(targetPath)
-		if err != nil {
-			if !os.IsNotExist(err) {
-				return nil, status.Errorf(codes.Internal, "error checking path %s for mount: %s", targetPath, err)
-			}
-			notMount = true
-		}
-		if !notMount {
-			// It's already mounted.
-			glog.V(5).Infof("Skipping bind-mounting subpath %s: already mounted", targetPath)
-			return &csi.NodePublishVolumeResponse{}, nil
-		}
-
-		options := []string{"bind"}
-		if err := mount.New("").Mount(loopDevice, targetPath, "", options); err != nil {
-			return nil, status.Error(codes.Internal, fmt.Sprintf("failed to mount block device: %s at %s: %v", loopDevice, targetPath, err))
-		}
-	} else if req.GetVolumeCapability().GetMount() != nil {
+	if req.GetVolumeCapability().GetMount() != nil {
 		if vol.VolAccessType != mountAccess {
 			return nil, status.Error(codes.InvalidArgument, "cannot publish a non-mount volume as mount volume")
 		}
@@ -141,6 +98,7 @@ func (ns *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublis
 				if err = os.MkdirAll(targetPath, 0750); err != nil {
 					return nil, status.Error(codes.Internal, err.Error())
 				}
+
 				notMnt = true
 			} else {
 				return nil, status.Error(codes.Internal, err.Error())
@@ -166,10 +124,11 @@ func (ns *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublis
 		glog.V(4).Infof("target %v\nfstype %v\ndevice %v\nreadonly %v\nvolumeId %v\nattributes %v\nmountflags %v\n",
 			targetPath, fsType, deviceId, readOnly, volumeId, attrib, mountFlags)
 
-		options := []string{"bind"}
+		options := []string{"loop"}
 		if readOnly {
 			options = append(options, "ro")
 		}
+
 		mounter := mount.New("")
 		path := getVolumePath(volumeId)
 
@@ -222,6 +181,7 @@ func (ns *nodeServer) NodeUnpublishVolume(ctx context.Context, req *csi.NodeUnpu
 	if err = os.RemoveAll(targetPath); err != nil {
 		return nil, status.Error(codes.Internal, err.Error())
 	}
+
 	glog.V(4).Infof("hostpath: volume %s has been unpublished.", targetPath)
 
 	if vol.Ephemeral {
@@ -233,6 +193,7 @@ func (ns *nodeServer) NodeUnpublishVolume(ctx context.Context, req *csi.NodeUnpu
 
 	return &csi.NodeUnpublishVolumeResponse{}, nil
 }
+
 
 func (ns *nodeServer) NodeStageVolume(ctx context.Context, req *csi.NodeStageVolumeRequest) (*csi.NodeStageVolumeResponse, error) {
 
@@ -250,6 +211,7 @@ func (ns *nodeServer) NodeStageVolume(ctx context.Context, req *csi.NodeStageVol
 	return &csi.NodeStageVolumeResponse{}, nil
 }
 
+
 func (ns *nodeServer) NodeUnstageVolume(ctx context.Context, req *csi.NodeUnstageVolumeRequest) (*csi.NodeUnstageVolumeResponse, error) {
 
 	// Check arguments
@@ -262,6 +224,7 @@ func (ns *nodeServer) NodeUnstageVolume(ctx context.Context, req *csi.NodeUnstag
 
 	return &csi.NodeUnstageVolumeResponse{}, nil
 }
+
 
 func (ns *nodeServer) NodeGetInfo(ctx context.Context, req *csi.NodeGetInfoRequest) (*csi.NodeGetInfoResponse, error) {
 
@@ -283,13 +246,6 @@ func (ns *nodeServer) NodeGetCapabilities(ctx context.Context, req *csi.NodeGetC
 			{
 				Type: &csi.NodeServiceCapability_Rpc{
 					Rpc: &csi.NodeServiceCapability_RPC{
-						Type: csi.NodeServiceCapability_RPC_STAGE_UNSTAGE_VOLUME,
-					},
-				},
-			},
-			{
-				Type: &csi.NodeServiceCapability_Rpc{
-					Rpc: &csi.NodeServiceCapability_RPC{
 						Type: csi.NodeServiceCapability_RPC_EXPAND_VOLUME,
 					},
 				},
@@ -302,7 +258,6 @@ func (ns *nodeServer) NodeGetVolumeStats(ctx context.Context, in *csi.NodeGetVol
 	return nil, status.Error(codes.Unimplemented, "")
 }
 
-// NodeExpandVolume is only implemented so the driver can be used for e2e testing.
 func (ns *nodeServer) NodeExpandVolume(ctx context.Context, req *csi.NodeExpandVolumeRequest) (*csi.NodeExpandVolumeResponse, error) {
 
 	volID := req.GetVolumeId()
@@ -321,22 +276,19 @@ func (ns *nodeServer) NodeExpandVolume(ctx context.Context, req *csi.NodeExpandV
 		return nil, status.Error(codes.InvalidArgument, "Volume path not provided")
 	}
 
-	info, err := os.Stat(volPath)
-	if err != nil {
-		return nil, status.Errorf(codes.InvalidArgument, "Could not get file information from %s: %v", volPath, err)
+	if vol.VolAccessType != mountAccess {
+		return nil, status.Errorf(codes.InvalidArgument, "Access type of volume %s is not a mount", volID)
 	}
 
-	switch m := info.Mode(); {
-	case m.IsDir():
-		if vol.VolAccessType != mountAccess {
-			return nil, status.Errorf(codes.InvalidArgument, "Volume %s is not a directory", volID)
-		}
-	case m&os.ModeDevice != 0:
-		if vol.VolAccessType != blockAccess {
-			return nil, status.Errorf(codes.InvalidArgument, "Volume %s is not a block device", volID)
-		}
-	default:
-		return nil, status.Errorf(codes.InvalidArgument, "Volume %s is invalid", volID)
+	executor := utilexec.New()
+	out, err := executor.Command("e2fsck", "-f", volPath).CombinedOutput()
+	if err != nil {
+		return nil, fmt.Errorf("failed to check file system: %v, %v", err, string(out))
+	}
+
+	out, err = executor.Command("resize2fs", volPath).CombinedOutput()
+	if err != nil {
+		return nil, fmt.Errorf("failed to resize volume: %v, %v", err, string(out))
 	}
 
 	return &csi.NodeExpandVolumeResponse{}, nil
