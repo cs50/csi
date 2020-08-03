@@ -47,7 +47,6 @@ func NewNodeServer(nodeId string, ephemeral bool, maxVolumesPerNode int64) *node
 	}
 }
 
-
 func (ns *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublishVolumeRequest) (*csi.NodePublishVolumeResponse, error) {
 
 	// Check arguments
@@ -156,6 +155,7 @@ func (ns *nodeServer) NodeUnpublishVolume(ctx context.Context, req *csi.NodeUnpu
 	if len(req.GetTargetPath()) == 0 {
 		return nil, status.Error(codes.InvalidArgument, "Target path missing in request")
 	}
+
 	targetPath := req.GetTargetPath()
 	volumeID := req.GetVolumeId()
 
@@ -176,6 +176,7 @@ func (ns *nodeServer) NodeUnpublishVolume(ctx context.Context, req *csi.NodeUnpu
 			return nil, status.Error(codes.Internal, err.Error())
 		}
 	}
+
 	// Delete the mount point.
 	// Does not return error for non-existent path, repeated calls OK for idempotency.
 	if err = os.RemoveAll(targetPath); err != nil {
@@ -194,7 +195,6 @@ func (ns *nodeServer) NodeUnpublishVolume(ctx context.Context, req *csi.NodeUnpu
 	return &csi.NodeUnpublishVolumeResponse{}, nil
 }
 
-
 func (ns *nodeServer) NodeStageVolume(ctx context.Context, req *csi.NodeStageVolumeRequest) (*csi.NodeStageVolumeResponse, error) {
 
 	// Check arguments
@@ -211,7 +211,6 @@ func (ns *nodeServer) NodeStageVolume(ctx context.Context, req *csi.NodeStageVol
 	return &csi.NodeStageVolumeResponse{}, nil
 }
 
-
 func (ns *nodeServer) NodeUnstageVolume(ctx context.Context, req *csi.NodeUnstageVolumeRequest) (*csi.NodeUnstageVolumeResponse, error) {
 
 	// Check arguments
@@ -224,7 +223,6 @@ func (ns *nodeServer) NodeUnstageVolume(ctx context.Context, req *csi.NodeUnstag
 
 	return &csi.NodeUnstageVolumeResponse{}, nil
 }
-
 
 func (ns *nodeServer) NodeGetInfo(ctx context.Context, req *csi.NodeGetInfoRequest) (*csi.NodeGetInfoResponse, error) {
 
@@ -243,6 +241,13 @@ func (ns *nodeServer) NodeGetCapabilities(ctx context.Context, req *csi.NodeGetC
 
 	return &csi.NodeGetCapabilitiesResponse{
 		Capabilities: []*csi.NodeServiceCapability{
+            {
+				Type: &csi.NodeServiceCapability_Rpc{
+					Rpc: &csi.NodeServiceCapability_RPC{
+						Type: csi.NodeServiceCapability_RPC_STAGE_UNSTAGE_VOLUME,
+					},
+				},
+			},
 			{
 				Type: &csi.NodeServiceCapability_Rpc{
 					Rpc: &csi.NodeServiceCapability_RPC{
@@ -281,12 +286,13 @@ func (ns *nodeServer) NodeExpandVolume(ctx context.Context, req *csi.NodeExpandV
 	}
 
 	executor := utilexec.New()
-	out, err := executor.Command("e2fsck", "-f", "-y", volPath).CombinedOutput()
+    path := getVolumePath(volID)
+	out, err := executor.Command("e2fsck", "-f", "-y", path).CombinedOutput()
 	if err != nil {
 		return nil, fmt.Errorf("failed to check file system: %v, %v", err, string(out))
 	}
 
-	out, err = executor.Command("resize2fs", volPath).CombinedOutput()
+	out, err = executor.Command("resize2fs", path).CombinedOutput()
 	if err != nil {
 		return nil, fmt.Errorf("failed to resize volume: %v, %v", err, string(out))
 	}
