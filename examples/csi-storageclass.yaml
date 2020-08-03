@@ -3,6 +3,6 @@ kind: StorageClass
 metadata:
   name: csi-hostpath-sc
 provisioner: hostpath.csi.k8s.io
-reclaimPolicy: Delete
+reclaimPolicy: Retain
 volumeBindingMode: Immediate
 allowVolumeExpansion: true
