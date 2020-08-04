@@ -31,7 +31,6 @@ import (
 	utilexec "k8s.io/utils/exec"
 )
 
-const TopologyKeyNode = "topology.hostpath.csi/node"
 
 type nodeServer struct {
 	nodeID            string
@@ -225,15 +224,9 @@ func (ns *nodeServer) NodeUnstageVolume(ctx context.Context, req *csi.NodeUnstag
 }
 
 func (ns *nodeServer) NodeGetInfo(ctx context.Context, req *csi.NodeGetInfoRequest) (*csi.NodeGetInfoResponse, error) {
-
-	topology := &csi.Topology{
-		Segments: map[string]string{TopologyKeyNode: ns.nodeID},
-	}
-
 	return &csi.NodeGetInfoResponse{
-		NodeId:             ns.nodeID,
-		MaxVolumesPerNode:  ns.maxVolumesPerNode,
-		AccessibleTopology: topology,
+		NodeId:            ns.nodeID,
+		MaxVolumesPerNode: ns.maxVolumesPerNode,
 	}, nil
 }
 
@@ -241,7 +234,7 @@ func (ns *nodeServer) NodeGetCapabilities(ctx context.Context, req *csi.NodeGetC
 
 	return &csi.NodeGetCapabilitiesResponse{
 		Capabilities: []*csi.NodeServiceCapability{
-            {
+			{
 				Type: &csi.NodeServiceCapability_Rpc{
 					Rpc: &csi.NodeServiceCapability_RPC{
 						Type: csi.NodeServiceCapability_RPC_STAGE_UNSTAGE_VOLUME,
@@ -286,7 +279,7 @@ func (ns *nodeServer) NodeExpandVolume(ctx context.Context, req *csi.NodeExpandV
 	}
 
 	executor := utilexec.New()
-    path := getVolumePath(volID)
+	path := getVolumePath(volID)
 	out, err := executor.Command("e2fsck", "-f", "-y", path).CombinedOutput()
 	if err != nil {
 		return nil, fmt.Errorf("failed to check file system: %v, %v", err, string(out))

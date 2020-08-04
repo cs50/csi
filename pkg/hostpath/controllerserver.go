@@ -175,17 +175,12 @@ func (cs *controllerServer) CreateVolume(ctx context.Context, req *csi.CreateVol
 		glog.V(4).Infof("successfully populated volume %s", vol.VolID)
 	}
 
-	topologies := []*csi.Topology{&csi.Topology{
-		Segments: map[string]string{TopologyKeyNode: cs.nodeID},
-	}}
-
 	return &csi.CreateVolumeResponse{
 		Volume: &csi.Volume{
 			VolumeId:           volumeID,
 			CapacityBytes:      req.GetCapacityRange().GetRequiredBytes(),
 			VolumeContext:      req.GetParameters(),
 			ContentSource:      req.GetVolumeContentSource(),
-			AccessibleTopology: topologies,
 		},
 	}, nil
 }
