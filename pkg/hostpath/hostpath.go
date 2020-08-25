@@ -31,6 +31,8 @@ import (
 	utilexec "k8s.io/utils/exec"
 
 	timestamp "github.com/golang/protobuf/ptypes/timestamp"
+
+	lru "github.com/hashicorp/golang-lru"
 )
 
 const (
@@ -79,7 +81,9 @@ type hostPathSnapshot struct {
 var (
 	vendorVersion = "dev"
 
-	hostPathVolumes         map[string]hostPathVolume
+	// TODO (kzidane) estimate max size of volumes
+	hostPathVolumes *lru.Cache
+
 	hostPathVolumeSnapshots map[string]hostPathSnapshot
 )
 
@@ -94,7 +98,13 @@ const (
 )
 
 func init() {
-	hostPathVolumes = map[string]hostPathVolume{}
+	// hostPathVolumes = map[string]hostPathVolume{}
+	var err error
+	hostPathVolumes, err = lru.New(128)
+	if err != nil {
+		glog.Errorf("failed to initialize hostPathVolumes LRU cach: %v", err)
+	}
+
 	hostPathVolumeSnapshots = map[string]hostPathSnapshot{}
 }
 
@@ -173,21 +183,14 @@ func (hp *hostPath) Run() {
 }
 
 func getVolumeByID(volumeID string) (hostPathVolume, error) {
-	if hostPathVol, ok := hostPathVolumes[volumeID]; ok {
-		return hostPathVol, nil
+	hostPathVol, ok := hostPathVolumes.Get(volumeID)
+	if ok {
+		return hostPathVol.(hostPathVolume), nil
 	}
+
+	// TODO (kzidane) load volume from disk
 
 	return hostPathVolume{}, fmt.Errorf("volume id %s does not exist in the volumes list", volumeID)
-}
-
-func getVolumeByName(volName string) (hostPathVolume, error) {
-	for _, hostPathVol := range hostPathVolumes {
-		if hostPathVol.VolName == volName {
-			return hostPathVol, nil
-		}
-	}
-
-	return hostPathVolume{}, fmt.Errorf("volume name %s does not exist in the volumes list", volName)
 }
 
 func getSnapshotByName(name string) (hostPathSnapshot, error) {
@@ -235,10 +238,9 @@ func createHostpathVolume(volID, name string, cap int64, volAccessType accessTyp
 		Ephemeral:     ephemeral,
 	}
 
-	hostPathVolumes[volID] = hostpathVol
+	hostPathVolumes.Add(volID, hostpathVol)
 	return &hostpathVol, nil
 }
-
 
 func expandVolume(volID string, cap int64) error {
 	path := getVolumePath(volID)
@@ -253,7 +255,6 @@ func expandVolume(volID string, cap int64) error {
 	return nil
 }
 
-
 // updateVolume updates the existing hostpath volume.
 func updateHostpathVolume(volID string, volume hostPathVolume) error {
 	glog.V(4).Infof("updating hostpath volume: %s", volID)
@@ -262,7 +263,7 @@ func updateHostpathVolume(volID string, volume hostPathVolume) error {
 		return err
 	}
 
-	hostPathVolumes[volID] = volume
+	hostPathVolumes.Add(volID, volume)
 	return nil
 }
 
@@ -275,7 +276,8 @@ func deleteHostpathVolume(volID string) error {
 		return err
 	}
 
-	delete(hostPathVolumes, volID)
+	// delete(hostPathVolumes, volID)
+	hostPathVolumes.Remove(volID)
 	return nil
 }
 

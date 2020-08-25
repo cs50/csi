@@ -112,7 +112,7 @@ func (cs *controllerServer) CreateVolume(ctx context.Context, req *csi.CreateVol
 
 	// Need to check for already existing volume name, and if found
 	// check for the requested capacity and already allocated capacity
-	if exVol, err := getVolumeByName(req.GetName()); err == nil {
+	if exVol, err := getVolumeByID(req.GetName()); err == nil {
 		// Since err is nil, it means the volume with the same name already exists
 		// need to check if the size of existing volume is the same as in new
 		// request
@@ -143,7 +143,7 @@ func (cs *controllerServer) CreateVolume(ctx context.Context, req *csi.CreateVol
 		}, nil
 	}
 
-	volumeID := uuid.NewUUID().String()
+	volumeID := req.GetName()
 
 	vol, err := createHostpathVolume(volumeID, req.GetName(), capacity, mountAccess, false /* ephemeral */)
 	if err != nil {
@@ -177,10 +177,10 @@ func (cs *controllerServer) CreateVolume(ctx context.Context, req *csi.CreateVol
 
 	return &csi.CreateVolumeResponse{
 		Volume: &csi.Volume{
-			VolumeId:           volumeID,
-			CapacityBytes:      req.GetCapacityRange().GetRequiredBytes(),
-			VolumeContext:      req.GetParameters(),
-			ContentSource:      req.GetVolumeContentSource(),
+			VolumeId:      volumeID,
+			CapacityBytes: req.GetCapacityRange().GetRequiredBytes(),
+			VolumeContext: req.GetParameters(),
+			ContentSource: req.GetVolumeContentSource(),
 		},
 	}, nil
 }
@@ -300,8 +300,8 @@ func (cs *controllerServer) CreateSnapshot(ctx context.Context, req *csi.CreateS
 	}
 
 	volumeID := req.GetSourceVolumeId()
-	hostPathVolume, ok := hostPathVolumes[volumeID]
-	if !ok {
+	hostPathVolume, err := getVolumeByID(volumeID)
+	if err != nil {
 		return nil, status.Error(codes.Internal, "volumeID is not exist")
 	}
 

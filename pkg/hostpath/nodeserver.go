@@ -31,7 +31,6 @@ import (
 	utilexec "k8s.io/utils/exec"
 )
 
-
 type nodeServer struct {
 	nodeID            string
 	ephemeral         bool
