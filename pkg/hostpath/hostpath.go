@@ -49,7 +49,6 @@ type hostPath struct {
 	nodeID            string
 	version           string
 	endpoint          string
-	ephemeral         bool
 	maxVolumesPerNode int64
 
 	ids *identityServer
@@ -65,7 +64,6 @@ type hostPathVolume struct {
 	VolAccessType accessType `json:"volAccessType"`
 	ParentVolID   string     `json:"parentVolID,omitempty"`
 	ParentSnapID  string     `json:"parentSnapID,omitempty"`
-	Ephemeral     bool       `json:"ephemeral"`
 }
 
 type hostPathSnapshot struct {
@@ -89,8 +87,6 @@ var (
 
 const (
 	// Directory where data for volumes and snapshots are persisted.
-	// This can be ephemeral within the container or persisted if
-	// backed by a Pod volume.
 	dataRoot = "/csi-data-dir"
 
 	// Extension with which snapshot files will be saved.
@@ -108,7 +104,7 @@ func init() {
 	hostPathVolumeSnapshots = map[string]hostPathSnapshot{}
 }
 
-func NewHostPathDriver(driverName, nodeID, endpoint string, ephemeral bool, maxVolumesPerNode int64, version string) (*hostPath, error) {
+func NewHostPathDriver(driverName, nodeID, endpoint string, maxVolumesPerNode int64, version string) (*hostPath, error) {
 	if driverName == "" {
 		return nil, errors.New("no driver name provided")
 	}
@@ -136,7 +132,6 @@ func NewHostPathDriver(driverName, nodeID, endpoint string, ephemeral bool, maxV
 		version:           vendorVersion,
 		nodeID:            nodeID,
 		endpoint:          endpoint,
-		ephemeral:         ephemeral,
 		maxVolumesPerNode: maxVolumesPerNode,
 	}, nil
 }
@@ -173,8 +168,8 @@ func discoverExistingSnapshots() {
 func (hp *hostPath) Run() {
 	// Create GRPC servers
 	hp.ids = NewIdentityServer(hp.name, hp.version)
-	hp.ns = NewNodeServer(hp.nodeID, hp.ephemeral, hp.maxVolumesPerNode)
-	hp.cs = NewControllerServer(hp.ephemeral, hp.nodeID)
+	hp.ns = NewNodeServer(hp.nodeID, hp.maxVolumesPerNode)
+	hp.cs = NewControllerServer(hp.nodeID)
 
 	discoverExistingSnapshots()
 	s := NewNonBlockingGRPCServer()
@@ -188,7 +183,7 @@ func getVolumeByID(volumeID string) (hostPathVolume, error) {
 		return hostPathVol.(hostPathVolume), nil
 	}
 
-	// TODO (kzidane) load volume from disk
+	// TODO (kzidane) load volume from Dynamodb table
 
 	return hostPathVolume{}, fmt.Errorf("volume id %s does not exist in the volumes list", volumeID)
 }
@@ -209,7 +204,7 @@ func getVolumePath(volID string) string {
 
 // createVolume create the directory for the hostpath volume.
 // It returns the volume path or err if one occurs.
-func createHostpathVolume(volID, name string, cap int64, volAccessType accessType, ephemeral bool) (*hostPathVolume, error) {
+func createHostpathVolume(volID string, cap int64, volAccessType accessType) (*hostPathVolume, error) {
 	path := getVolumePath(volID)
 	if volAccessType == mountAccess {
 		executor := utilexec.New()
@@ -231,12 +226,12 @@ func createHostpathVolume(volID, name string, cap int64, volAccessType accessTyp
 
 	hostpathVol := hostPathVolume{
 		VolID:         volID,
-		VolName:       name,
 		VolSize:       cap,
 		VolPath:       path,
 		VolAccessType: volAccessType,
-		Ephemeral:     ephemeral,
 	}
+
+	// TODO (kzidane) Write to Dynamodb table
 
 	hostPathVolumes.Add(volID, hostpathVol)
 	return &hostpathVol, nil

@@ -33,14 +33,12 @@ import (
 
 type nodeServer struct {
 	nodeID            string
-	ephemeral         bool
 	maxVolumesPerNode int64
 }
 
-func NewNodeServer(nodeId string, ephemeral bool, maxVolumesPerNode int64) *nodeServer {
+func NewNodeServer(nodeId string, maxVolumesPerNode int64) *nodeServer {
 	return &nodeServer{
 		nodeID:            nodeId,
-		ephemeral:         ephemeral,
 		maxVolumesPerNode: maxVolumesPerNode,
 	}
 }
@@ -59,24 +57,8 @@ func (ns *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublis
 	}
 
 	targetPath := req.GetTargetPath()
-	ephemeralVolume := req.GetVolumeContext()["csi.storage.k8s.io/ephemeral"] == "true" ||
-		req.GetVolumeContext()["csi.storage.k8s.io/ephemeral"] == "" && ns.ephemeral // Kubernetes 1.15 doesn't have csi.storage.k8s.io/ephemeral.
-
 	if req.GetVolumeCapability().GetMount() == nil {
 		return nil, status.Error(codes.InvalidArgument, "access type must be mount")
-	}
-
-	// if ephemeral is specified, create volume here to avoid errors
-	if ephemeralVolume {
-		volID := req.GetVolumeId()
-		volName := fmt.Sprintf("ephemeral-%s", volID)
-		vol, err := createHostpathVolume(req.GetVolumeId(), volName, maxStorageCapacity, mountAccess, ephemeralVolume)
-		if err != nil && !os.IsExist(err) {
-			glog.Error("ephemeral mode failed to create volume: ", err)
-			return nil, status.Error(codes.Internal, err.Error())
-		}
-
-		glog.V(4).Infof("ephemeral mode: created volume: %s", vol.VolPath)
 	}
 
 	vol, err := getVolumeByID(req.GetVolumeId())
@@ -132,11 +114,6 @@ func (ns *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublis
 		if err := mounter.Mount(path, targetPath, "", options); err != nil {
 			var errList strings.Builder
 			errList.WriteString(err.Error())
-			if vol.Ephemeral {
-				if rmErr := os.RemoveAll(path); rmErr != nil && !os.IsNotExist(rmErr) {
-					errList.WriteString(fmt.Sprintf(" :%s", rmErr.Error()))
-				}
-			}
 			return nil, status.Error(codes.Internal, fmt.Sprintf("failed to mount device: %s at %s: %s", path, targetPath, errList.String()))
 		}
 	}
@@ -155,12 +132,6 @@ func (ns *nodeServer) NodeUnpublishVolume(ctx context.Context, req *csi.NodeUnpu
 	}
 
 	targetPath := req.GetTargetPath()
-	volumeID := req.GetVolumeId()
-
-	vol, err := getVolumeByID(volumeID)
-	if err != nil {
-		return nil, status.Error(codes.NotFound, err.Error())
-	}
 
 	// Unmount only if the target path is really a mount point.
 	if notMnt, err := mount.IsNotMountPoint(mount.New(""), targetPath); err != nil {
@@ -177,19 +148,11 @@ func (ns *nodeServer) NodeUnpublishVolume(ctx context.Context, req *csi.NodeUnpu
 
 	// Delete the mount point.
 	// Does not return error for non-existent path, repeated calls OK for idempotency.
-	if err = os.RemoveAll(targetPath); err != nil {
+	if err := os.RemoveAll(targetPath); err != nil {
 		return nil, status.Error(codes.Internal, err.Error())
 	}
 
 	glog.V(4).Infof("hostpath: volume %s has been unpublished.", targetPath)
-
-	if vol.Ephemeral {
-		glog.V(4).Infof("deleting volume %s", volumeID)
-		if err := deleteHostpathVolume(volumeID); err != nil && !os.IsNotExist(err) {
-			return nil, status.Error(codes.Internal, fmt.Sprintf("failed to delete volume: %s", err))
-		}
-	}
-
 	return &csi.NodeUnpublishVolumeResponse{}, nil
 }
 
