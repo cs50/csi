@@ -5,11 +5,8 @@ go 1.12
 require (
 	github.com/container-storage-interface/spec v1.2.0
 	github.com/golang/glog v0.0.0-20160126235308-23def4e6c14b
-	github.com/golang/protobuf v1.3.2
-	github.com/google/uuid v1.0.0 // indirect
 	github.com/hashicorp/golang-lru v0.5.4
 	github.com/kubernetes-csi/csi-lib-utils v0.3.0
-	github.com/pborman/uuid v0.0.0-20180906182336-adf5a7427709
 	github.com/spf13/afero v1.2.2 // indirect
 	github.com/stretchr/testify v1.4.0 // indirect
 	golang.org/x/net v0.0.0-20190311183353-d8887717615a

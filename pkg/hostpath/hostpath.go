@@ -20,17 +20,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"os"
 	"path/filepath"
-	"strings"
 
 	"github.com/golang/glog"
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
 	utilexec "k8s.io/utils/exec"
-
-	timestamp "github.com/golang/protobuf/ptypes/timestamp"
 
 	lru "github.com/hashicorp/golang-lru"
 )
@@ -63,17 +57,6 @@ type hostPathVolume struct {
 	VolPath       string     `json:"volPath"`
 	VolAccessType accessType `json:"volAccessType"`
 	ParentVolID   string     `json:"parentVolID,omitempty"`
-	ParentSnapID  string     `json:"parentSnapID,omitempty"`
-}
-
-type hostPathSnapshot struct {
-	Name         string              `json:"name"`
-	Id           string              `json:"id"`
-	VolID        string              `json:"volID"`
-	Path         string              `json:"path"`
-	CreationTime timestamp.Timestamp `json:"creationTime"`
-	SizeBytes    int64               `json:"sizeBytes"`
-	ReadyToUse   bool                `json:"readyToUse"`
 }
 
 var (
@@ -81,17 +64,10 @@ var (
 
 	// TODO (kzidane) estimate max size of volumes
 	hostPathVolumes *lru.Cache
-
-	hostPathVolumeSnapshots map[string]hostPathSnapshot
 )
 
-const (
-	// Directory where data for volumes and snapshots are persisted.
-	dataRoot = "/csi-data-dir"
-
-	// Extension with which snapshot files will be saved.
-	snapshotExt = ".snap"
-)
+// Directory where data for volumes are persisted.
+const dataRoot = "/csi-data-dir"
 
 func init() {
 	// hostPathVolumes = map[string]hostPathVolume{}
@@ -100,8 +76,6 @@ func init() {
 	if err != nil {
 		glog.Errorf("failed to initialize hostPathVolumes LRU cach: %v", err)
 	}
-
-	hostPathVolumeSnapshots = map[string]hostPathSnapshot{}
 }
 
 func NewHostPathDriver(driverName, nodeID, endpoint string, maxVolumesPerNode int64, version string) (*hostPath, error) {
@@ -136,42 +110,12 @@ func NewHostPathDriver(driverName, nodeID, endpoint string, maxVolumesPerNode in
 	}, nil
 }
 
-func getSnapshotID(file string) (bool, string) {
-	glog.V(4).Infof("file: %s", file)
-	// Files with .snap extension are volumesnapshot files.
-	// e.g. foo.snap, foo.bar.snap
-	if filepath.Ext(file) == snapshotExt {
-		return true, strings.TrimSuffix(file, snapshotExt)
-	}
-	return false, ""
-}
-
-func discoverExistingSnapshots() {
-	glog.V(4).Infof("discovering existing snapshots in %s", dataRoot)
-	files, err := ioutil.ReadDir(dataRoot)
-	if err != nil {
-		glog.Errorf("failed to discover snapshots under %s: %v", dataRoot, err)
-	}
-	for _, file := range files {
-		isSnapshot, snapshotID := getSnapshotID(file.Name())
-		if isSnapshot {
-			glog.V(4).Infof("adding snapshot %s from file %s", snapshotID, getSnapshotPath(snapshotID))
-			hostPathVolumeSnapshots[snapshotID] = hostPathSnapshot{
-				Id:         snapshotID,
-				Path:       getSnapshotPath(snapshotID),
-				ReadyToUse: true,
-			}
-		}
-	}
-}
-
 func (hp *hostPath) Run() {
 	// Create GRPC servers
 	hp.ids = NewIdentityServer(hp.name, hp.version)
 	hp.ns = NewNodeServer(hp.nodeID, hp.maxVolumesPerNode)
 	hp.cs = NewControllerServer(hp.nodeID)
 
-	discoverExistingSnapshots()
 	s := NewNonBlockingGRPCServer()
 	s.Start(hp.endpoint, hp.ids, hp.cs, hp.ns)
 	s.Wait()
@@ -186,15 +130,6 @@ func getVolumeByID(volumeID string) (hostPathVolume, error) {
 	// TODO (kzidane) load volume from Dynamodb table
 
 	return hostPathVolume{}, fmt.Errorf("volume id %s does not exist in the volumes list", volumeID)
-}
-
-func getSnapshotByName(name string) (hostPathSnapshot, error) {
-	for _, snapshot := range hostPathVolumeSnapshots {
-		if snapshot.Name == name {
-			return snapshot, nil
-		}
-	}
-	return hostPathSnapshot{}, fmt.Errorf("snapshot name %s does not exist in the snapshots list", name)
 }
 
 // getVolumePath returns the canonical path for hostpath volume
@@ -290,33 +225,4 @@ func hostPathIsEmpty(p string) (bool, error) {
 		return true, nil
 	}
 	return false, err
-}
-
-// loadFromSnapshot populates the given destPath with data from the snapshotID
-func loadFromSnapshot(size int64, snapshotId, destPath string, mode accessType) error {
-	snapshot, ok := hostPathVolumeSnapshots[snapshotId]
-	if !ok {
-		return status.Errorf(codes.NotFound, "cannot find snapshot %v", snapshotId)
-	}
-	if snapshot.ReadyToUse != true {
-		return status.Errorf(codes.Internal, "snapshot %v is not yet ready to use.", snapshotId)
-	}
-	if snapshot.SizeBytes > size {
-		return status.Errorf(codes.InvalidArgument, "snapshot %v size %v is greater than requested volume size %v", snapshotId, snapshot.SizeBytes, size)
-	}
-	snapshotPath := snapshot.Path
-
-	var cmd []string
-	if mode == mountAccess {
-		cmd = []string{"dd", "if=" + snapshotPath, "of=" + destPath}
-	} else {
-		return status.Errorf(codes.InvalidArgument, "unknown accessType: %d", mode)
-	}
-
-	executor := utilexec.New()
-	out, err := executor.Command(cmd[0], cmd[1:]...).CombinedOutput()
-	if err != nil {
-		return status.Errorf(codes.Internal, "failed pre-populate data from snapshot %v: %v: %s", snapshotId, err, out)
-	}
-	return nil
 }
