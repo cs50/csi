@@ -60,14 +60,6 @@ func (ids *identityServer) Probe(ctx context.Context, req *csi.ProbeRequest) (*c
 func (ids *identityServer) GetPluginCapabilities(ctx context.Context, req *csi.GetPluginCapabilitiesRequest) (*csi.GetPluginCapabilitiesResponse, error) {
 	glog.V(5).Infof("Using default capabilities")
 	return &csi.GetPluginCapabilitiesResponse{
-		Capabilities: []*csi.PluginCapability{
-			{
-				Type: &csi.PluginCapability_Service_{
-					Service: &csi.PluginCapability_Service{
-						Type: csi.PluginCapability_Service_CONTROLLER_SERVICE,
-					},
-				},
-			},
-		},
+		Capabilities: []*csi.PluginCapability{},
 	}, nil
 }

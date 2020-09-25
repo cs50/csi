@@ -28,7 +28,6 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"k8s.io/kubernetes/pkg/util/mount"
-	utilexec "k8s.io/utils/exec"
 )
 
 type nodeServer struct {
@@ -61,16 +60,7 @@ func (ns *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublis
 		return nil, status.Error(codes.InvalidArgument, "access type must be mount")
 	}
 
-	vol, err := getVolumeByID(req.GetVolumeId())
-	if err != nil {
-		return nil, status.Error(codes.NotFound, err.Error())
-	}
-
 	if req.GetVolumeCapability().GetMount() != nil {
-		if vol.VolAccessType != mountAccess {
-			return nil, status.Error(codes.InvalidArgument, "cannot publish a non-mount volume as mount volume")
-		}
-
 		notMnt, err := mount.New("").IsNotMountPoint(targetPath)
 		if err != nil {
 			if os.IsNotExist(err) {
@@ -90,18 +80,13 @@ func (ns *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublis
 
 		fsType := req.GetVolumeCapability().GetMount().GetFsType()
 
-		deviceId := ""
-		if req.GetPublishContext() != nil {
-			deviceId = req.GetPublishContext()[deviceID]
-		}
-
 		readOnly := req.GetReadonly()
 		volumeId := req.GetVolumeId()
 		attrib := req.GetVolumeContext()
 		mountFlags := req.GetVolumeCapability().GetMount().GetMountFlags()
 
-		glog.V(4).Infof("target %v\nfstype %v\ndevice %v\nreadonly %v\nvolumeId %v\nattributes %v\nmountflags %v\n",
-			targetPath, fsType, deviceId, readOnly, volumeId, attrib, mountFlags)
+		glog.V(4).Infof("target %v\nfstype %v\nreadonly %v\nvolumeId %v\nattributes %v\nmountflags %v\n",
+			targetPath, fsType, readOnly, volumeId, attrib, mountFlags)
 
 		options := []string{"loop"}
 		if readOnly {
@@ -220,37 +205,5 @@ func (ns *nodeServer) NodeGetVolumeStats(ctx context.Context, in *csi.NodeGetVol
 
 func (ns *nodeServer) NodeExpandVolume(ctx context.Context, req *csi.NodeExpandVolumeRequest) (*csi.NodeExpandVolumeResponse, error) {
 
-	volID := req.GetVolumeId()
-	if len(volID) == 0 {
-		return nil, status.Error(codes.InvalidArgument, "Volume ID not provided")
-	}
-
-	vol, err := getVolumeByID(volID)
-	if err != nil {
-		// Assume not found error
-		return nil, status.Errorf(codes.NotFound, "Could not get volume %s: %v", volID, err)
-	}
-
-	volPath := req.GetVolumePath()
-	if len(volPath) == 0 {
-		return nil, status.Error(codes.InvalidArgument, "Volume path not provided")
-	}
-
-	if vol.VolAccessType != mountAccess {
-		return nil, status.Errorf(codes.InvalidArgument, "Access type of volume %s is not a mount", volID)
-	}
-
-	executor := utilexec.New()
-	path := getVolumePath(volID)
-	out, err := executor.Command("e2fsck", "-f", "-y", path).CombinedOutput()
-	if err != nil {
-		return nil, fmt.Errorf("failed to check file system: %v, %v", err, string(out))
-	}
-
-	out, err = executor.Command("resize2fs", path).CombinedOutput()
-	if err != nil {
-		return nil, fmt.Errorf("failed to resize volume: %v, %v", err, string(out))
-	}
-
-	return &csi.NodeExpandVolumeResponse{}, nil
+	return nil, status.Error(codes.Unimplemented, "")
 }
