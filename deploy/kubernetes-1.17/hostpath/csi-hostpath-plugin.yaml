@@ -128,11 +128,8 @@ spec:
             path: /var/lib/kubelet/plugins
             type: Directory
           name: plugins-dir
-        - hostPath:
-            # 'path' is where PV data is persisted on host.
-            # using /tmp is also possible while the PVs will not available after plugin container recreation or host reboot
-            path: /var/lib/csi-hostpath-data/
-            type: DirectoryOrCreate
+        - persistentVolumeClaim:
+            claimName: efs-claim
           name: csi-data-dir
         - hostPath:
             path: /dev
