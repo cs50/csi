@@ -20,8 +20,6 @@ BASE_DIR=$(dirname "$0")
 # - CSI_ATTACHER_TAG
 # - CSI_NODE_DRIVER_REGISTRAR_REGISTRY
 # - CSI_NODE_DRIVER_REGISTRAR_TAG
-# - CSI_PROVISIONER_REGISTRY
-# - CSI_PROVISIONER_TAG
 # - CSI_SNAPSHOTTER_REGISTRY
 # - CSI_SNAPSHOTTER_TAG
 # - HOSTPATHPLUGIN_REGISTRY
@@ -109,12 +107,8 @@ function version_gt() {
     test "$(printf '%s' "$versions" | sort -V | head -n 1)" != "$greaterVersion"
 }
 
-CSI_PROVISIONER_RBAC_YAML="https://raw.githubusercontent.com/kubernetes-csi/external-provisioner/$(rbac_version "${BASE_DIR}/hostpath/csi-hostpath-provisioner.yaml" csi-provisioner false)/deploy/kubernetes/rbac.yaml"
-: ${CSI_PROVISIONER_RBAC:=https://raw.githubusercontent.com/kubernetes-csi/external-provisioner/$(rbac_version "${BASE_DIR}/hostpath/csi-hostpath-provisioner.yaml" csi-provisioner "${UPDATE_RBAC_RULES}")/deploy/kubernetes/rbac.yaml}
 CSI_ATTACHER_RBAC_YAML="https://raw.githubusercontent.com/kubernetes-csi/external-attacher/$(rbac_version "${BASE_DIR}/hostpath/csi-hostpath-attacher.yaml" csi-attacher false)/deploy/kubernetes/rbac.yaml"
 : ${CSI_ATTACHER_RBAC:=https://raw.githubusercontent.com/kubernetes-csi/external-attacher/$(rbac_version "${BASE_DIR}/hostpath/csi-hostpath-attacher.yaml" csi-attacher "${UPDATE_RBAC_RULES}")/deploy/kubernetes/rbac.yaml}
-CSI_RESIZER_RBAC_YAML="https://raw.githubusercontent.com/kubernetes-csi/external-resizer/$(rbac_version "${BASE_DIR}/hostpath/csi-hostpath-resizer.yaml" csi-resizer false)/deploy/kubernetes/rbac.yaml"
-: ${CSI_RESIZER_RBAC:=https://raw.githubusercontent.com/kubernetes-csi/external-resizer/$(rbac_version "${BASE_DIR}/hostpath/csi-hostpath-resizer.yaml" csi-resizer "${UPDATE_RBAC_RULES}")/deploy/kubernetes/rbac.yaml}
 
 INSTALL_CRD=${INSTALL_CRD:-"false"}
 
@@ -131,7 +125,7 @@ run () {
 
 # rbac rules
 echo "applying RBAC rules"
-for component in CSI_PROVISIONER CSI_ATTACHER CSI_RESIZER; do
+for component in CSI_ATTACHER; do
     eval current="\${${component}_RBAC}"
     eval original="\${${component}_RBAC_YAML}"
     if [ "$current" != "$original" ]; then
@@ -190,9 +184,9 @@ done
 
 # Wait until all pods are running. We have to make some assumptions
 # about the deployment here, otherwise we wouldn't know what to wait
-# for: the expectation is that we run attacher, provisioner,
-# resizer, socat and hostpath plugin in the default namespace.
-expected_running_pods=5
+# for: the expectation is that we run attacher,
+# socat and hostpath plugin in the default namespace.
+expected_running_pods=3
 cnt=0
 while [ $(kubectl get pods 2>/dev/null | grep '^csi-hostpath.* Running ' | wc -l) -lt ${expected_running_pods} ]; do
     if [ $cnt -gt 30 ]; then
