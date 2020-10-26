@@ -39,7 +39,7 @@ type hostPath struct {
 var vendorVersion = "dev"
 
 // Directory where data for volumes are persisted.
-const dataRoot = "/csi-data-dir"
+const dataRoot = "/csi-data-dir/volumes"
 
 func NewHostPathDriver(driverName, nodeID, endpoint string, maxVolumesPerNode int64, version string) (*hostPath, error) {
 	if driverName == "" {
