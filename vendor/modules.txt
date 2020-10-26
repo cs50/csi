@@ -11,12 +11,8 @@ github.com/golang/protobuf/ptypes/any
 github.com/golang/protobuf/ptypes/duration
 github.com/golang/protobuf/ptypes/timestamp
 github.com/golang/protobuf/ptypes/wrappers
-# github.com/google/uuid v1.0.0
-github.com/google/uuid
 # github.com/kubernetes-csi/csi-lib-utils v0.3.0
 github.com/kubernetes-csi/csi-lib-utils/protosanitizer
-# github.com/pborman/uuid v0.0.0-20180906182336-adf5a7427709
-github.com/pborman/uuid
 # golang.org/x/net v0.0.0-20190311183353-d8887717615a
 golang.org/x/net/context
 golang.org/x/net/http/httpguts
@@ -72,13 +68,11 @@ google.golang.org/grpc/stats
 google.golang.org/grpc/status
 google.golang.org/grpc/tap
 # k8s.io/apimachinery v0.0.0-20181110190943-2a7c93004028
-k8s.io/apimachinery/pkg/types
 k8s.io/apimachinery/pkg/util/sets
 # k8s.io/kubernetes v1.12.2
 k8s.io/kubernetes/pkg/util/file
 k8s.io/kubernetes/pkg/util/io
 k8s.io/kubernetes/pkg/util/mount
 k8s.io/kubernetes/pkg/util/nsenter
-k8s.io/kubernetes/pkg/volume/util/volumepathhandler
 # k8s.io/utils v0.0.0-20181102055113-1bd4f387aa67
 k8s.io/utils/exec
