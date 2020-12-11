@@ -16,12 +16,8 @@ BASE_DIR=$(dirname "$0")
 # If set, the following env variables override image registry and/or tag for each of the images.
 # They are named after the image name, with hyphen replaced by underscore and in upper case.
 #
-# - CSI_ATTACHER_REGISTRY
-# - CSI_ATTACHER_TAG
 # - CSI_NODE_DRIVER_REGISTRAR_REGISTRY
 # - CSI_NODE_DRIVER_REGISTRAR_TAG
-# - CSI_SNAPSHOTTER_REGISTRY
-# - CSI_SNAPSHOTTER_TAG
 # - HOSTPATHPLUGIN_REGISTRY
 # - HOSTPATHPLUGIN_TAG
 #
@@ -36,10 +32,6 @@ BASE_DIR=$(dirname "$0")
 # deployments anymore. That text file must have the name of the blacklisted
 # image on a line by itself, other lines are ignored. Example:
 #
-#     # The following canary images are known to be incompatible with this
-#     # deployment:
-#     csi-snapshotter
-#
 # Beware that the .yaml files do not have "imagePullPolicy: Always". That means that
 # also the "canary" images will only be pulled once. This is good for testing
 # (starting a pod multiple times will always run with the same canary image), but
@@ -47,93 +39,11 @@ BASE_DIR=$(dirname "$0")
 #
 # As a special case, 'none' as registry removes the registry name.
 
-# The default is to use the RBAC rules that match the image that is
-# being used, also in the case that the image gets overridden. This
-# way if there are breaking changes in the RBAC rules, the deployment
-# will continue to work.
-#
-# However, such breaking changes should be rare and only occur when updating
-# to a new major version of a sidecar. Nonetheless, to allow testing the scenario
-# where the image gets overridden but not the RBAC rules, updating the RBAC
-# rules can be disabled.
-: ${UPDATE_RBAC_RULES:=true}
-function rbac_version () {
-    yaml="$1"
-    image="$2"
-    update_rbac="$3"
-
-    # get version from `image: quay.io/k8scsi/csi-attacher:v1.0.1`, ignoring comments
-    version="$(sed -e 's/ *#.*$//' "$yaml" | grep "image:.*$image" | sed -e 's/ *#.*//' -e 's/.*://')"
-
-    if $update_rbac; then
-        # apply overrides
-        varname=$(echo $image | tr - _ | tr a-z A-Z)
-        eval version=\${${varname}_TAG:-\${IMAGE_TAG:-\$version}}
-    fi
-
-    # When using canary images, we have to assume that the
-    # canary images were built from the corresponding branch.
-    case "$version" in canary) version=master;;
-                        *-canary) version="$(echo "$version" | sed -e 's/\(.*\)-canary/release-\1/')";;
-    esac
-
-    echo "$version"
-}
-
-# version_gt returns true if arg1 is greater than arg2.
-#
-# This function expects versions to be one of the following formats:
-#   X.Y.Z, release-X.Y.Z, vX.Y.Z
-#
-#   where X,Y, and Z are any number.
-#
-# Partial versions (1.2, release-1.2) work as well.
-# The follow substrings are stripped before version comparison:
-#   - "v"
-#   - "release-"
-#
-# Usage:
-# version_gt release-1.3 v1.2.0  (returns true)
-# version_gt v1.1.1 v1.2.0  (returns false)
-# version_gt 1.1.1 v1.2.0  (returns false)
-# version_gt 1.3.1 v1.2.0  (returns true)
-# version_gt 1.1.1 release-1.2.0  (returns false)
-# version_gt 1.2.0 1.2.2  (returns false)
-function version_gt() {
-    versions=$(for ver in "$@"; do ver=${ver#release-}; ver=${ver#kubernetes-}; echo ${ver#v}; done)
-    greaterVersion=${1#"release-"};
-    greaterVersion=${greaterVersion#"kubernetes-"};
-    greaterVersion=${greaterVersion#"v"};
-    test "$(printf '%s' "$versions" | sort -V | head -n 1)" != "$greaterVersion"
-}
-
-CSI_ATTACHER_RBAC_YAML="https://raw.githubusercontent.com/kubernetes-csi/external-attacher/$(rbac_version "${BASE_DIR}/hostpath/csi-hostpath-attacher.yaml" csi-attacher false)/deploy/kubernetes/rbac.yaml"
-: ${CSI_ATTACHER_RBAC:=https://raw.githubusercontent.com/kubernetes-csi/external-attacher/$(rbac_version "${BASE_DIR}/hostpath/csi-hostpath-attacher.yaml" csi-attacher "${UPDATE_RBAC_RULES}")/deploy/kubernetes/rbac.yaml}
-
-INSTALL_CRD=${INSTALL_CRD:-"false"}
-
 # Some images are not affected by *_REGISTRY/*_TAG and IMAGE_* variables.
 # The default is to update unless explicitly excluded.
 update_image () {
     case "$1" in socat) return 1;; esac
 }
-
-run () {
-    echo "$@" >&2
-    "$@"
-}
-
-# rbac rules
-echo "applying RBAC rules"
-for component in CSI_ATTACHER; do
-    eval current="\${${component}_RBAC}"
-    eval original="\${${component}_RBAC_YAML}"
-    if [ "$current" != "$original" ]; then
-        echo "Using non-default RBAC rules for $component. Changes from $original to $current are:"
-        diff -c <(wget --quiet -O - "$original") <(if [[ "$current" =~ ^http ]]; then wget --quiet -O - "$current"; else cat "$current"; fi) || true
-    fi
-    run kubectl apply -f "${current}"
-done
 
 # deploy hostpath plugin and registrar sidecar
 echo "deploying hostpath components"
@@ -184,9 +94,9 @@ done
 
 # Wait until all pods are running. We have to make some assumptions
 # about the deployment here, otherwise we wouldn't know what to wait
-# for: the expectation is that we run attacher,
-# socat and hostpath plugin in the default namespace.
-expected_running_pods=3
+# for: the expectation is that we run socat and hostpath plugin in
+# the default namespace.
+expected_running_pods=2
 cnt=0
 while [ $(kubectl get pods 2>/dev/null | grep '^csi-hostpath.* Running ' | wc -l) -lt ${expected_running_pods} ]; do
     if [ $cnt -gt 30 ]; then

@@ -8,4 +8,5 @@ spec:
   - Persistent
   # To determine at runtime which mode a volume uses, pod info and its
   # "csi.storage.k8s.io/ephemeral" entry are needed.
+  attachRequired: false
   podInfoOnMount: true
