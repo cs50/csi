@@ -29,12 +29,12 @@ deploy:
 - provider: script
   script: docker push "$TRAVIS_REPO_SLUG:$TRAVIS_TAG" && docker push "$TRAVIS_REPO_SLUG:latest"
   on:
-    branch: master
+    branch: main
 - provider: releases
   api_key: "$GITHUB_TOKEN"
   skip_cleanup: true
   on:
-    branch: master
+    branch: main
 notifications:
   slack:
     secure: bbDSf3DnCLNMZKCXWA3x/k0KGdO/C6UbqeNJi6NialkTwCvBdco4OVY4WFvJbV+6tzEU7rfBVvrC82iDcto7U05tx1JesuuXrOxJOjvkZeQOXG29Orf3qDvPfJmFy/9vvf39cKE1LnqvwWrXceID6wy76nXJwk2wSeg2Ftaip44iQF3MgPgh7sB2dc9cZfUtjEPaPVPjWX8Z4pM4XNp+Rm/Sadp9+SlQw8mX1pdSCIjKakoMr1dhz7FN+LSWArnIAeD2VVdGvvJjfsncXNYjVolbohUL1pK+HXTOAs/7LlQLWqZk4tmyr8uaI/ch6LzUb8kL/Obhx0sYy6eD3FQq3hlacnA102CXnDY4FQxT8eoae/5RdUeK43t05cMAHoFdJzZYkleIZVzNE3ZCD7eWX1ar5LF0YSWF6ZizombZfvCBGpIHgZbJ8QFaBB17518A+osfIYgFJP33kIJMnrPz/eXcQBZdOez4tJ22GYUajYIZU+fE57aHjagTlVABGYsjJZj71Atgn4Nqr7Fick2n0Xcrlk5qIH9oqoR9rlMx17/SGrduEemFiwCX0UyFWCMwsMWu5RQMrygihnop4notFz+jfCri7KZi+q9cLHcwuRWqTk1mgVWAyvsB48zjnIzuIPrFAGgLmRDBDU7DaKmQTLNpEbkvd98DW5u8PrruKZQ=
